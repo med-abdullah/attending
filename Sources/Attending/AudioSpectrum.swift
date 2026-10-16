@@ -46,9 +46,7 @@ import Accelerate
         }
         self.analyzer = analyzer
         var proc: AudioDeviceIOProcID?
-        let status = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { _, input, _, _, _ in
-            analyzer.consume(input)
-        }
+        let status = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue, Self.ioBlock(analyzer))
         guard status == noErr, let proc else { stop(); return }
         procID = proc
         guard AudioDeviceStart(aggregate, proc) == noErr else { stop(); return }
@@ -73,6 +71,11 @@ import Accelerate
         if !live && bands.contains(where: { $0 > 0.02 }) { live = true }
     }
 
+    /// The audio thread's callback, made outside the main actor: Core Audio calls it on
+    /// its own queue, so it must not inherit main-actor isolation.
+    nonisolated private static func ioBlock(_ analyzer: SpectrumAnalyzer) -> AudioDeviceIOBlock {
+        { _, input, _, _, _ in analyzer.consume(input) }
+    }
     private static func defaultOutputUID() -> String? {
         var device = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)

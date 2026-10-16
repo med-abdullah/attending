@@ -781,6 +781,7 @@ struct SettingsView: View {
                 Picker("Position", selection: Binding(get: { model.islandAnchor }, set: { model.islandAnchor = $0 })) {
                     ForEach(IslandAnchor.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.frame(maxWidth: 320)
+                note("Or drag the island: let go and it glides to the nearest spot.")
                 if NSScreen.screens.count > 1 { Toggle("Show on the display with the menu bar", isOn: $model.islandOnMainScreen) }
                 StepAsideSettings(stepAside: model.stepAside)
                 Toggle("Clean screen (for recording and presenting)", isOn: Binding(get: { model.cleanScreen.on }, set: { model.cleanScreen.set($0) }))

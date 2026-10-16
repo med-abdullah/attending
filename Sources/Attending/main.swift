@@ -56,6 +56,9 @@ final class NotchPanel: NSPanel {
     private var islandScreenRect: CGRect?
     private var layoutGeneration = 0
     private var lastLayoutKey = ""
+    /// Dragging the island to a new spot: where the press started, and whether it's moving.
+    private var dragStart: NSPoint?
+    private var draggingIsland = false
     private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Attending", category: "lifecycle")
     private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.82)
 
@@ -124,6 +127,7 @@ final class NotchPanel: NSPanel {
             if running { self?.model.setMode(.idle) }
             self?.updateVisibility()
         }
+        installIslandDrag()
         model.stepAside.start()
         Task { await model.start() }
         model.onboarding.model = model
@@ -160,9 +164,9 @@ final class NotchPanel: NSPanel {
         let chosen = model.islandOnMainScreen ? NSScreen.screens.first : nil
         return chosen ?? notched ?? NSScreen.main ?? NSScreen.screens.first
     }
-    private func metrics() -> NotchMetrics? {
+    private func metrics(for anchor: IslandAnchor? = nil) -> NotchMetrics? {
         guard let screen = islandScreen() else { return nil }
-        let useNotch = model.islandAnchor == .notch && screen.safeAreaInsets.top > 0
+        let useNotch = (anchor ?? model.islandAnchor) == .notch && screen.safeAreaInsets.top > 0
         return NotchMetrics(screen: screen.frame, visible: screen.visibleFrame, notchLeft: useNotch ? screen.auxiliaryTopLeftArea?.maxX : nil, notchRight: useNotch ? screen.auxiliaryTopRightArea?.minX : nil, height: useNotch ? screen.safeAreaInsets.top : 0, scale: screen.backingScaleFactor)
     }
     private func targetRect(_ m: NotchMetrics) -> CGRect {
@@ -177,7 +181,8 @@ final class NotchPanel: NSPanel {
     /// the island between them, then the window shrinks back to fit. Window frames
     /// never animate, which is what made the old transitions stutter.
     private func layout(animated: Bool) {
-        guard let m = metrics() else { return }
+        // While the island is being dragged, it follows the pointer instead.
+        guard !draggingIsland, let m = metrics() else { return }
         let notchHeight = m.hasNotch ? m.height : 0
         if model.notchHeight != notchHeight { model.notchHeight = notchHeight }
         if model.notchWidth != m.notchWidth { model.notchWidth = m.notchWidth }
@@ -230,6 +235,7 @@ final class NotchPanel: NSPanel {
     /// Hides the island while it steps aside (full screen, an editor in front, the
     /// teleprompter) unless it's open, and brings it back with any alert that waited.
     private func updateVisibility() {
+        defer { MediaKeyTap.passThrough = !panel.isVisible }
         guard model.awake, !model.pickerOpen else { return }
         if model.islandAside {
             if panel.isVisible { panel.orderOut(nil) }
@@ -250,6 +256,66 @@ final class NotchPanel: NSPanel {
             panel.makeKeyAndOrderFront(nil)
         } else if panel.isKeyWindow {
             panel.resignKey()
+        }
+    }
+
+    // MARK: Moving the island
+
+    /// Drag the island anywhere; on release it glides to the nearest spot (under the notch,
+    /// top left, top right or bottom center). A press that doesn't move is still a click.
+    private func installIslandDrag() {
+        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp], handler: { [weak self] event in
+            let type = event.type, window = event.windowNumber
+            let consumed = MainActor.assumeIsolated { self?.handleIslandDrag(type, window: window) ?? false }
+            return consumed ? nil : event
+        }) else { return }
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in NSEvent.removeMonitor(monitor) })
+    }
+    /// Returns true when the event was part of a drag (and shouldn't reach the island as a click).
+    func handleIslandDrag(_ type: NSEvent.EventType, window: Int, at point: NSPoint? = nil) -> Bool {
+        let mouse = point ?? NSEvent.mouseLocation
+        switch type {
+        case .leftMouseDown:
+            let onIsland = islandScreenRect?.insetBy(dx: -6, dy: -6).contains(mouse) ?? false
+            dragStart = window == panel.windowNumber && model.mode != .expanded && onIsland ? mouse : nil
+            return false
+        case .leftMouseDragged:
+            guard let start = dragStart else { return false }
+            if !draggingIsland {
+                guard hypot(mouse.x - start.x, mouse.y - start.y) > 6 else { return false }
+                draggingIsland = true
+                hoverTask?.cancel(); leaveTask?.cancel()
+                model.alert = nil
+                if model.mode != .idle { model.setMode(.idle); model.shownMode = .idle }
+                // A floating pill while it moves, whatever spot it left.
+                model.notchHeight = 0
+            }
+            guard let m = metrics(for: .topLeft) else { return true }
+            let size = IslandGeometry.collapsed(m, wing: model.idleWing, anchor: .topLeft).size
+            let rect = CGRect(x: mouse.x - size.width / 2, y: mouse.y - size.height / 2, width: size.width, height: size.height)
+            islandScreenRect = rect
+            resize(to: rect, islandAt: local(rect, in: rect))
+            return true
+        case .leftMouseUp:
+            dragStart = nil
+            guard draggingIsland else { return false }
+            draggingIsland = false
+            let drop = CGPoint(x: islandScreenRect?.midX ?? mouse.x, y: islandScreenRect?.midY ?? mouse.y)
+            let candidates = IslandAnchor.allCases.compactMap { anchor -> (IslandAnchor, CGFloat)? in
+                guard let m = metrics(for: anchor), anchor != .notch || m.hasNotch else { return nil }
+                let rect = IslandGeometry.collapsed(m, wing: model.idleWing, anchor: anchor)
+                return (anchor, hypot(rect.midX - drop.x, rect.midY - drop.y))
+            }
+            lastLayoutKey = ""
+            if let best = candidates.min(by: { $0.1 < $1.1 })?.0, best != model.islandAnchor {
+                model.islandAnchor = best   // lays out, springing from where it was dropped
+            } else {
+                layout(animated: true)
+            }
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            return true
+        default:
+            return false
         }
     }
 
@@ -409,6 +475,7 @@ final class NotchPanel: NSPanel {
         if model.clipboardEnabled { model.clipboard.start() }
         lastLayoutKey = ""; layout(animated: false)
         if !model.islandAside { panel.orderFrontRegardless() }
+        MediaKeyTap.passThrough = !panel.isVisible
     }
 }
 let app = NSApplication.shared

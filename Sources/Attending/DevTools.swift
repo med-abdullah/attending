@@ -57,7 +57,7 @@ extension AppDelegate {
             var last = ""
             while true {
                 let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.screens[0]
-                let line = "ASIDE hidden=\(model.stepAside.hidden) fullscreen=\(StepAside.hasFullscreenWindow(on: screen)) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-") panelVisible=\(panel.isVisible) prompter=\(model.prompter.running)"
+                let line = "ASIDE hidden=\(model.stepAside.hidden) fullscreen=\(StepAside.hasFullscreenWindow(on: screen)) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-") panelVisible=\(panel.isVisible) prompter=\(model.prompter.running) keysToMacOS=\(MediaKeyTap.passThrough)"
                 if line != last { print(line); fflush(stdout); last = line }
                 try? await Task.sleep(for: .milliseconds(500))
             }
@@ -92,6 +92,32 @@ extension AppDelegate {
             model.holdOpen = true
             try? await Task.sleep(for: .seconds(2))
             await captureGemini(directory)
+            NSApp.terminate(nil)
+        }
+    }
+    if CommandLine.arguments.contains("--drag-test") {
+        // Drags the island to the bottom of the screen and back, through the real drag code.
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            let original = model.islandAnchor
+            @MainActor func drag(to target: NSPoint) async {
+                let start = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+                _ = handleIslandDrag(.leftMouseDown, window: panel.windowNumber, at: start)
+                for step in 1...12 {
+                    let t = CGFloat(step) / 12
+                    _ = handleIslandDrag(.leftMouseDragged, window: panel.windowNumber, at: NSPoint(x: start.x + (target.x - start.x) * t, y: start.y + (target.y - start.y) * t))
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                _ = handleIslandDrag(.leftMouseUp, window: panel.windowNumber, at: target)
+                try? await Task.sleep(for: .seconds(1.5))
+                print("DRAG to (\(Int(target.x)), \(Int(target.y))) -> anchor=\(model.islandAnchor.rawValue) frame=\(panel.frame.integral) mode=\(model.mode)"); fflush(stdout)
+            }
+            let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.screens[0]
+            let f = screen.visibleFrame
+            await drag(to: NSPoint(x: f.midX + 40, y: f.minY + 60))
+            await drag(to: NSPoint(x: f.maxX - 80, y: f.maxY - 30))
+            await drag(to: NSPoint(x: f.midX - 10, y: screen.frame.maxY - 10))
+            model.islandAnchor = original
             NSApp.terminate(nil)
         }
     }

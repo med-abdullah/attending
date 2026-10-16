@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- **Drag the island anywhere:** press and drag it; when you let go it glides to the nearest spot (under the notch, top left, top right or bottom center). Thanks to a commenter for the idea.
+- **Fix:** the volume display shows again while a video is full screen. When the island steps aside, the volume and brightness keys go to macOS and its own display appears.
+- **Fix:** the music visualizer no longer trips a threading warning while audio plays.
+
 ## 1.1.0
 
 - **Boards countdown:** COMLEX, USMLE, shelf and block exams with presets, a dedicated period, days off and study days; a question-bank pace with quick logging; practice exams with a score trend; milestone, checklist, exam-morning and "you did it" moments; a calm mode; a countdown in the closed notch; and a shareable countdown card.

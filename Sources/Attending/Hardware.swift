@@ -160,11 +160,14 @@ enum DisplayBrightness {
     /// False when the output device has no software volume (HDMI, some USB DACs);
     /// volume keys then pass through to macOS instead of being swallowed.
     nonisolated(unsafe) static var volumeAdjustable = true
+    /// True while the island is out of sight (full screen, an editor in front, the
+    /// teleprompter): the keys go to macOS so its own volume and brightness display shows.
+    nonisolated(unsafe) static var passThrough = false
 
     /// Decides whether a system-defined key event is one Attending handles. Key-up
     /// events for handled keys are swallowed too, so macOS never sees half a press.
     nonisolated private static func classify(_ event: CGEvent) -> Action? {
-        guard let ns = NSEvent(cgEvent: event), ns.type == .systemDefined, ns.subtype.rawValue == 8 else { return nil }
+        guard !passThrough, let ns = NSEvent(cgEvent: event), ns.type == .systemDefined, ns.subtype.rawValue == 8 else { return nil }
         let code = (ns.data1 & 0xFFFF_0000) >> 16
         let down = ((ns.data1 & 0xFF00) >> 8) == 0xA
         // Option+Shift gives quarter steps, matching macOS.
