@@ -17,6 +17,8 @@ import ApplicationServices
     @Published private(set) var location = CLLocationManager().authorizationStatus
     @Published private(set) var claude = ClaudeHooks.installed
     @Published private(set) var claudeNote: String?
+    @Published private(set) var codex = CodexHooks.installed
+    @Published private(set) var codexNote: String?
 
     weak var model: AppModel?
     private var window: NSWindow?
@@ -39,7 +41,7 @@ import ApplicationServices
         self.step = step
         refresh()
         if let window { window.makeKeyAndOrderFront(nil); NSApp.activate(); return }
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 580), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 720), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.title = "Welcome to Attending"
@@ -59,6 +61,13 @@ import ApplicationServices
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
         RunLoop.main.add(timer, forMode: .common)
         poll = timer
+    }
+
+    /// For checking the layout: draws the open window into a PNG.
+    func snapshot(to url: URL) {
+        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
     func finish() {
@@ -85,11 +94,13 @@ import ApplicationServices
         calendar = EKEventStore.authorizationStatus(for: .event)
         location = locationManager.authorizationStatus
         claude = ClaudeHooks.installed
+        codex = CodexHooks.installed
     }
     var accessibilityStatus: Status { accessibility ? .allowed : .missing }
     var calendarStatus: Status { calendar == .fullAccess || calendar == .authorized ? .allowed : .missing }
     var locationStatus: Status { [.authorized, .authorizedAlways].contains(location) ? .allowed : .missing }
     var claudeStatus: Status { claude ? .allowed : .optional }
+    var codexStatus: Status { codex ? .allowed : .optional }
 
     // MARK: Actions
 
@@ -111,6 +122,10 @@ import ApplicationServices
     }
     func connectClaude() {
         do { claudeNote = try ClaudeHooks.install() } catch { claudeNote = error.localizedDescription }
+        refresh()
+    }
+    func connectCodex() {
+        do { codexNote = try CodexHooks.install() } catch { codexNote = error.localizedDescription }
         refresh()
     }
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -140,7 +155,7 @@ struct OnboardingView: View {
         }
         .ignoresSafeArea()
         .environment(\.colorScheme, .dark)
-        .frame(width: 600, height: 580)
+        .frame(width: 600, height: 720)
     }
 }
 
@@ -257,6 +272,11 @@ struct SetupList: View {
                     PermissionRow(symbol: "terminal", title: "Claude Code", detail: onboarding.claudeNote ?? "Optional · agent alerts, questions and approvals in the notch",
                                   status: onboarding.claudeStatus, button: "Connect", allowed: "Connected", action: onboarding.connectClaude)
                 }
+                if CodexHooks.codexInstalled || onboarding.codex {
+                    PermissionRow(symbol: "chevron.left.forwardslash.chevron.right", title: "Codex", detail: onboarding.codexNote ?? "Optional · answer Codex's approval requests from the notch",
+                                  status: onboarding.codexStatus, button: "Connect", allowed: "Connected", action: onboarding.connectCodex)
+                }
+                if let screenTime = onboarding.model?.screenTime { StudyExtras(screenTime: screenTime) }
             }
             .padding(.horizontal, 40)
             Spacer(minLength: 16)
@@ -265,6 +285,29 @@ struct SetupList: View {
             OnboardingButton(title: "Continue", symbol: "arrow.right", action: onboarding.finish)
                 .padding(.top, 14).padding(.bottom, 40)
         }
+    }
+}
+
+/// Study extras that start off; turning them on here is the only nudge.
+struct StudyExtras: View {
+    @ObservedObject var screenTime: ScreenTime
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $screenTime.enabled) { extra("Screen Time", "See how much of your day goes to studying, AI and distractions") }
+            Toggle(isOn: $screenTime.guardFocus) { extra("Focus guard", "A gentle nudge if YouTube or a game opens during a focus timer") }
+        }
+        .toggleStyle(.switch).tint(Theme.working)
+        .padding(.horizontal, 18).padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.06)))
+    }
+    private func extra(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary)
+            Text(detail).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import AttendingCore
 
 /// Where your time at the Mac goes: studying, AI, or distractions. Every 30 seconds while
 /// you're using the Mac it notes the front app (and, in a browser, the tab's title, read
@@ -11,11 +12,19 @@ import ApplicationServices
         var logKey: String { "screen.\(rawValue)" }
     }
 
-    @Published var enabled = UserDefaults.standard.object(forKey: "screenTime") as? Bool ?? true {
+    /// Off for new users, who can turn it on during setup; anyone who already had it
+    /// (it used to default on) keeps it.
+    @Published var enabled = ScreenTime.setting("screenTime") {
         didSet { UserDefaults.standard.set(enabled, forKey: "screenTime"); restart() }
     }
-    @Published var guardFocus = UserDefaults.standard.object(forKey: "distractionGuard") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(guardFocus, forKey: "distractionGuard") }
+    @Published var guardFocus = ScreenTime.setting("distractionGuard") {
+        didSet { UserDefaults.standard.set(guardFocus, forKey: "distractionGuard"); restart() }
+    }
+    private static func setting(_ key: String) -> Bool {
+        if let saved = UserDefaults.standard.object(forKey: key) as? Bool { return saved }
+        let existing = Onboarding.done || FileManager.default.fileExists(atPath: AppPaths.directory.appendingPathComponent("state.json").path)
+        UserDefaults.standard.set(existing, forKey: key)
+        return existing
     }
     /// Seconds per category, logged into the activity log.
     var record: ((Category, Int) -> Void)?

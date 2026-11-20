@@ -151,6 +151,11 @@ struct StudyView: View {
                 LookupBar()
                 if model.showExams && !exams.upcoming.isEmpty { BoardsCard(exams: exams, onShare: model.shareExam, turnOnExamWeek: { model.examWeek = true }) }
                 TrackersCard(sheets: sheets)
+                CanvasCard(canvas: model.canvas)
+                HStack(alignment: .top, spacing: 10) {
+                    BlockCard(model: model, block: model.block).frame(maxWidth: .infinity)
+                    WeakTopicsCard(model: model, topics: model.weakTopics).frame(width: 290)
+                }
                 HStack(alignment: .top, spacing: 10) {
                     AnkiCard(anki: anki).frame(maxWidth: .infinity)
                     StudySessionCard(model: model, timer: model.timer, anki: anki).frame(width: 250)
@@ -636,6 +641,12 @@ struct SalahCard: View {
                         ForEach(PrayerTimes.Prayer.obligatory, id: \.self) { prayer in
                             PrayerPill(prayer: prayer, time: salah.times[prayer], prayed: salah.prayed.contains(prayer), current: salah.current == prayer) { salah.toggle(prayer) }
                         }
+                    }
+                    // Shia timing: Dhuhr and Asr run to sunset, Maghrib and Isha to Islamic midnight.
+                    if salah.method.isShia, let sunset = salah.times[.sunset], let midnight = salah.midnight {
+                        Text("Sunset \(sunset.formatted(date: .omitted, time: .shortened)) · Midnight \(midnight.formatted(date: .omitted, time: .shortened))")
+                            .font(.system(size: 10, weight: .medium)).monospacedDigit().foregroundStyle(Theme.tertiary)
+                            .help("Dhuhr and Asr can be prayed until sunset; Maghrib and Isha until Islamic midnight (halfway from sunset to Fajr)")
                     }
                 }
             }

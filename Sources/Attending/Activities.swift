@@ -31,6 +31,12 @@ struct LiveActivity: Identifiable, Equatable {
     private var sizeTimer: Timer?
     private var lastGrowth: [String: Date] = [:]
     private var lastSample: [String: (bytes: Int64, at: Date)] = [:]
+    /// Files already announced, so a render that pauses and resumes doesn't ding twice.
+    private var announced: [String: Date] = [:]
+    /// An export is done after this long without growing; renders often pause for a few seconds.
+    private static let exportQuiet: TimeInterval = 20
+    /// Writes shorter than this (cache files, autosaves, quick saves) finish without an alert.
+    private static let minimumExport: TimeInterval = 20
     private static let videoExtensions: Set<String> = ["mov", "mp4", "m4v", "mxf", "mkv", "avi", "webm", "mts", "braw", "wav", "m4a", "aac", "mp3"]
 
     var running: [LiveActivity] { activities.filter { $0.state == .running } }
@@ -91,7 +97,7 @@ struct LiveActivity: Identifiable, Equatable {
             activities[index].url = finalURL
             activities[index].fraction = 1
             activities[index].bytes = (try? finalURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? activities[index].bytes
-            onFinished?(activities[index])
+            announce(activities[index])
         }
     }
     static func displayName(for url: URL) -> String {
@@ -147,13 +153,19 @@ struct LiveActivity: Identifiable, Equatable {
             let url = URL(fileURLWithPath: path)
             let ext = url.pathExtension.lowercased()
             let inDownloads = path.hasPrefix(downloads) && !path.dropFirst(downloads.count).contains("/")
-            guard !url.lastPathComponent.hasPrefix("."), inDownloads || Self.videoExtensions.contains(ext) else { continue }
+            guard !url.lastPathComponent.hasPrefix("."), inDownloads || (Self.videoExtensions.contains(ext) && !Self.isWorkingFile(path)) else { continue }
             guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) else {
                 finish(path: path); lastSample[path] = nil; continue
             }
             let now = Date()
             if let index = activities.firstIndex(where: { $0.id == path && $0.state == .running }) {
                 update(index, size: size, now: now)
+            } else if let previous = lastSample[path], size > previous.bytes,
+                      let index = activities.firstIndex(where: { $0.id == path && $0.state == .done && $0.kind == .export && now.timeIntervalSince($0.finishedAt ?? .distantPast) < 10 * 60 }) {
+                // A render that paused long enough to look finished: pick it back up, without a second alert.
+                activities[index].state = .running; activities[index].finishedAt = nil
+                update(index, size: size, now: now)
+                ensureSizeTimer()
             } else if let previous = lastSample[path], size > previous.bytes,
                       !activities.contains(where: { $0.id == path && $0.state != .running && Date().timeIntervalSince($0.finishedAt ?? .distantPast) < 60 }) {
                 // Seen growing twice (and not a file that just finished): in progress.
@@ -199,18 +211,41 @@ struct LiveActivity: Identifiable, Equatable {
             } else {
                 finish(path: path); continue
             }
-            // Partial downloads finish when renamed; everything else after 8 s without growth.
-            if !Self.partialExtensions.contains(activities[index].url.pathExtension.lowercased()), now.timeIntervalSince(lastGrowth[path] ?? now) > 8 {
+            // Partial downloads finish when renamed; other downloads after 8 s without growth,
+            // exports after 20 s (renders pause between segments).
+            let quiet = activities[index].kind == .export ? Self.exportQuiet : 8
+            if !Self.partialExtensions.contains(activities[index].url.pathExtension.lowercased()), now.timeIntervalSince(lastGrowth[path] ?? now) > quiet {
                 activities[index].state = .done
-                activities[index].finishedAt = now
+                activities[index].finishedAt = lastGrowth[path] ?? now
                 activities[index].bytesPerSecond = 0
-                onFinished?(activities[index])
+                announce(activities[index])
             }
         }
         lastSample = lastSample.filter { now.timeIntervalSince($0.value.at) < 60 }
+        announced = announced.filter { now.timeIntervalSince($0.value) < 30 * 60 }
         if !activities.contains(where: { $0.state == .running }) {
             sizeTimer?.invalidate(); sizeTimer = nil
         }
+    }
+    /// Only finished work the user would want to hear about: not a file already announced,
+    /// and not an export that took under 20 seconds (caches, autosaves, quick saves).
+    private func announce(_ activity: LiveActivity) {
+        if announced[activity.id] != nil { return }
+        if activity.kind == .export, (activity.finishedAt ?? Date()).timeIntervalSince(activity.startedAt) < Self.minimumExport { return }
+        announced[activity.id] = Date()
+        onFinished?(activity)
+    }
+    /// Files editors write while you work, never exports: render caches, optimized and proxy
+    /// media, audio caches, backups and anything inside a library bundle.
+    static func isWorkingFile(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        let folders = ["/cacheclip/", "/cache/", "/caches/", "/render cache/", "/render files/", "/optimizedmedia/", "/optimized media/", "/proxymedia/", "/proxy media/", "/proxies/", "/proxy/",
+                       "/transcoded media/", "/.gallery/", "/gallery/", "/audio cache/", "/fusion/", "/resolve disk database/", "/resolve project library/", "/final cut backups/",
+                       "/capcut/user data/", "/capcut drafts/", "/user data/", "/autosave", "/backups/", "/screen studio projects/"]
+        if folders.contains(where: lower.contains) { return true }
+        // Inside a Final Cut, iMovie, Photos or Capture One library: renders and transcodes, not exports.
+        let bundles = [".fcpbundle/", ".imovielibrary/", ".photoslibrary/", ".cocatalog/", ".drp/", ".prproj/", ".band/", ".logicx/"]
+        return bundles.contains(where: lower.contains)
     }
     /// Names the app most likely writing an export.
     private static var renderingApp: String? {

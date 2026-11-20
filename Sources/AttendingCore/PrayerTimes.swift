@@ -3,17 +3,18 @@ import Foundation
 /// Daily prayer times from the sun's position (the PrayTimes.org method): Fajr and
 /// Isha at a twilight angle below the horizon, Dhuhr just after solar noon, Asr when
 /// an object's shadow reaches its length (or twice it, Hanafi) plus its noon shadow,
-/// Maghrib at sunset. Offline and deterministic.
+/// Maghrib at sunset (Sunni methods) or once the sun is 4–4.5° below the horizon and the
+/// eastern redness is gone (Shia methods). Offline and deterministic.
 public enum PrayerTimes {
     public enum Prayer: String, CaseIterable, Codable, Sendable {
-        case fajr, sunrise, dhuhr, asr, maghrib, isha
+        case fajr, sunrise, dhuhr, asr, sunset, maghrib, isha
         public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
         /// The five daily prayers (sunrise marks the end of Fajr's time, not a prayer).
         public static let obligatory: [Prayer] = [.fajr, .dhuhr, .asr, .maghrib, .isha]
     }
 
     public enum Method: String, CaseIterable, Codable, Sendable {
-        case isna, mwl, egyptian, karachi, ummAlQura
+        case isna, mwl, egyptian, karachi, ummAlQura, jafari, tehran
         public var title: String {
             switch self {
             case .isna: "ISNA (North America)"
@@ -21,12 +22,18 @@ public enum PrayerTimes {
             case .egyptian: "Egyptian Authority"
             case .karachi: "Karachi (University of Islamic Sciences)"
             case .ummAlQura: "Umm al-Qura (Makkah)"
+            case .jafari: "Shia Ithna-Ashari (Jafari, Leva Institute, Qum)"
+            case .tehran: "Shia (Institute of Geophysics, Tehran)"
             }
         }
-        var fajrAngle: Double { switch self { case .isna: 15; case .mwl: 18; case .egyptian: 19.5; case .karachi: 18; case .ummAlQura: 18.5 } }
+        /// Shia (Jafari) timing: Maghrib after the redness, shared Dhuhr–Asr and Maghrib–Isha times, Islamic midnight.
+        public var isShia: Bool { self == .jafari || self == .tehran }
+        var fajrAngle: Double { switch self { case .isna: 15; case .mwl: 18; case .egyptian: 19.5; case .karachi: 18; case .ummAlQura: 18.5; case .jafari: 16; case .tehran: 17.7 } }
         /// Isha as a twilight angle, or nil when it's a fixed time after Maghrib.
-        var ishaAngle: Double? { switch self { case .isna: 15; case .mwl: 17; case .egyptian: 17.5; case .karachi: 18; case .ummAlQura: nil } }
+        var ishaAngle: Double? { switch self { case .isna: 15; case .mwl: 17; case .egyptian: 17.5; case .karachi: 18; case .ummAlQura: nil; case .jafari, .tehran: 14 } }
         var ishaMinutesAfterMaghrib: Double { self == .ummAlQura ? 90 : 0 }
+        /// Maghrib as the sun's angle below the horizon; Sunni methods use sunset.
+        var maghribAngle: Double? { switch self { case .jafari: 4; case .tehran: 4.5; default: nil } }
     }
 
     public enum Asr: Int, CaseIterable, Codable, Sendable {
@@ -45,7 +52,7 @@ public enum PrayerTimes {
         let jd = julianDay(year: year, month: month, day: day) - longitude / (15 * 24)
 
         // Estimates in hours, refined twice with the sun's position at each estimate.
-        var hours: [Prayer: Double] = [.fajr: 5, .sunrise: 6, .dhuhr: 12, .asr: 13, .maghrib: 18, .isha: 18]
+        var hours: [Prayer: Double] = [.fajr: 5, .sunrise: 6, .dhuhr: 12, .asr: 13, .sunset: 18, .maghrib: 18, .isha: 18]
         for _ in 0..<2 {
             func t(_ prayer: Prayer) -> Double { hours[prayer]! / 24 }
             let sun = Sun(jd: jd, latitude: latitude)
@@ -54,7 +61,8 @@ public enum PrayerTimes {
             next[.sunrise] = sun.angleTime(0.833, t(.sunrise), before: true)
             next[.dhuhr] = sun.noon(t(.dhuhr))
             next[.asr] = sun.asrTime(Double(asr.rawValue), t(.asr))
-            next[.maghrib] = sun.angleTime(0.833, t(.maghrib), before: false)
+            next[.sunset] = sun.angleTime(0.833, t(.sunset), before: false)
+            next[.maghrib] = sun.angleTime(method.maghribAngle ?? 0.833, t(.maghrib), before: false)
             next[.isha] = method.ishaAngle.map { sun.angleTime($0, t(.isha), before: false) } ?? next[.maghrib]!
             hours = next.mapValues { $0.isNaN ? 0 : $0 }
         }
@@ -67,6 +75,13 @@ public enum PrayerTimes {
             result[prayer] = midnight.addingTimeInterval(seconds)
         }
         return result
+    }
+
+    /// Islamic midnight in Jafari reckoning: halfway from sunset to the next Fajr. The end of
+    /// Maghrib and Isha for Shia methods.
+    public static func midnight(sunset: Date, nextFajr: Date) -> Date {
+        let seconds = (nextFajr.timeIntervalSince(sunset) / 2 / 60).rounded() * 60
+        return sunset.addingTimeInterval(seconds)
     }
 
     static func julianDay(year: Int, month: Int, day: Int) -> Double {

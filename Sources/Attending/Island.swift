@@ -169,11 +169,12 @@ struct WingsView: View {
                         .foregroundStyle(model.mood == .idle ? Theme.secondary : model.mood.color)
                 }
                 MicIndicator(meeting: model.meeting)
+                if model.block.running { BlockWing(block: model.block) }
                 if let event = model.calendar.imminent { MeetingChip(event: event) }
-                else if let exam = model.wingExam {
-                    Text(model.exams.compact(exam)).font(.system(size: 10, weight: .semibold, design: .rounded)).monospacedDigit()
-                        .foregroundStyle(model.exams.urgency(exam) == Theme.primary ? Theme.secondary : model.exams.urgency(exam)).lineLimit(1).fixedSize()
-                        .help("\(exam.name): \(model.exams.compact(exam))")
+                else if let countdown = model.wingCountdown {
+                    Text(countdown.text).font(.system(size: 10, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(countdown.color).lineLimit(1).fixedSize()
+                        .help(countdown.help)
                 }
                 if model.liveActivities { ActivityRing(center: model.activities) }
             }
@@ -297,6 +298,7 @@ struct HomeView: View {
     /// Exam week: the countdown and study cards only.
     private var examWeekContent: some View {
         VStack(spacing: 10) {
+            if model.block.running { Card(padding: 10) { BlockStrip(block: model.block) } }
             BoardsCard(exams: model.exams, onShare: model.shareExam)
             HStack(alignment: .top, spacing: 10) {
                 VStack(spacing: 10) {
@@ -313,17 +315,20 @@ struct HomeView: View {
     private var regularContent: some View {
         VStack(spacing: 10) {
             if !model.headerTabs.contains(.agents) && (!model.claudeApprovals.isEmpty || !model.codexApprovals.isEmpty) { ApprovalInbox(model: model) }
+            if model.block.running { Card(padding: 10) { BlockStrip(block: model.block) } }
             if model.liveActivities { ActivityList(center: model.activities, limit: 2) }
             if model.mediaControls { MediaCard(media: media, volume: model.volume) }
             HStack(alignment: .top, spacing: 10) {
                 VStack(spacing: 10) {
                     if model.headerTabs.contains(.agents) || !model.active.isEmpty { AgentsSummaryCard(model: model) }
                     StudyTodayCard(model: model, sheets: model.sheets)
+                    CanvasCard(canvas: model.canvas, compact: true)
                     UsageCard(model: model, usage: model.usage)
                     TimerCard(timer: timer)
                 }
                 VStack(spacing: 10) {
                     TodayCard(model: model, calendar: calendar, weather: model.weather)
+                    RemindersCard(reminders: model.reminders)
                     if model.salahEnabled { SalahCard(salah: model.salah) }
                     AnkiMiniCard(anki: model.anki)
                 }.frame(width: 272)
@@ -468,6 +473,9 @@ struct TodayCard: View {
                     }
                 } else {
                     Text("Nothing else scheduled").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary)
+                }
+                if model.calendarEnabled && calendar.authorized || !calendar.feeds.isEmpty {
+                    ClassesSection(model: model, lectures: model.lectures, calendar: calendar, sheets: model.sheets)
                 }
                 if !model.weatherEnabled {
                     Button { model.setWeather(true) } label: { Label("Show weather", systemImage: "cloud.sun").font(.system(size: 11)) }
@@ -751,6 +759,7 @@ struct SettingsView: View {
     @ObservedObject var usage: UsageMonitor
     @State private var confirmClear = false
     @State private var usageMessage: String?
+    @State private var codexMessage: String?
     @AppStorage("hoverTabs") private var hoverTabs = true
     @AppStorage("liveVisualizer") private var visualizer = true
     @AppStorage("ecgWhenActive") private var ecgWhenActive = true
@@ -774,7 +783,10 @@ struct SettingsView: View {
                 }
                 Toggle("Celebrate finished turns", isOn: $model.completionNotifications)
             }
-            group("Updates") { UpdatesSection(updater: model.updater) }
+            group("Updates") {
+                UpdatesSection(updater: model.updater)
+                Button("What's new in \(WhatsNew.version)") { model.whatsNew.show() }
+            }
             if model.downloads.enabled { group("Downloads") { DownloadsSection(stats: model.downloads) } }
             group("Tabs") { TabsSettings(model: model) }
             group("Notch") {
@@ -833,6 +845,7 @@ struct SettingsView: View {
                     Picker("Remind me before classes and events", selection: $model.eventLead) {
                         Text("Off").tag(0); ForEach([5, 10, 15, 30], id: \.self) { Text("\($0) min").tag($0) }
                     }.frame(maxWidth: 380)
+                    GuideView(guide: Guides.calendars)
                 }
             }
             group("Outlook & Google") {
@@ -861,7 +874,11 @@ struct SettingsView: View {
                 note("Make these in the Shortcuts app with a \"Set Focus\" action to turn on Do Not Disturb while agents work.")
             }
             group("Study") {
+                GuideView(guide: Guides.tracker)
+                GuideView(guide: Guides.blocks)
+                GuideView(guide: Guides.anki)
                 note("Tracker exam dates are read from your PBL trackers automatically. Board exams are below.")
+                LectureSettings(lectures: model.lectures, calendar: model.calendar)
                 Toggle("Weekly recap on Sunday evening", isOn: Binding(get: { model.activity.sundayRecap }, set: { model.activity.sundayRecap = $0 }))
                 Picker("Water and stretch reminder", selection: $model.breakEvery) {
                     Text("Off").tag(0); ForEach([45, 60, 90], id: \.self) { Text("Every \($0) min").tag($0) }
@@ -877,6 +894,8 @@ struct SettingsView: View {
                 }
             }
             group("Boards") { BoardsSettings(model: model, exams: model.exams) }
+            group("Canvas") { CanvasSettings(canvas: model.canvas, calendar: model.calendar); GuideView(guide: Guides.canvas) }
+            group("Reminders") { RemindersSettings(reminders: model.reminders); GuideView(guide: Guides.reminders) }
             group("Capture") {
                 Toggle("Screenshot drops", isOn: Binding(get: { model.screenshotDrops }, set: { model.setScreenshotDrops($0) }))
                 note("New screenshots and recordings pop out of the notch and land on your Shelf.")
@@ -886,6 +905,7 @@ struct SettingsView: View {
             }
             group("Salah") {
                 Toggle("Prayer times and tracker", isOn: Binding(get: { model.salahEnabled }, set: { model.setSalah($0) }))
+                GuideView(guide: Guides.salah)
                 Picker("Calculation", selection: Binding(get: { model.salah.method }, set: { model.salah.method = $0 })) {
                     ForEach(PrayerTimes.Method.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.frame(maxWidth: 380)
@@ -906,7 +926,7 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("Surah Al-Kahf reminder Friday morning", isOn: Binding(get: { model.salah.kahfReminder }, set: { model.salah.kahfReminder = $0 }))
-                note("Times are calculated on this Mac for your location\(model.salah.place.map { " (\($0))" } ?? ""). ISNA is common in North America; match your local masjid's timetable. Set the khutbah time to your masjid's.")
+                note("Times are calculated on this Mac for your location\(model.salah.place.map { " (\($0))" } ?? ""). ISNA is common in North America; match your local masjid's timetable. Set the khutbah time to your masjid's. The Shia methods put Maghrib after the redness (4° below the horizon), keep Dhuhr and Asr due until sunset and Maghrib and Isha until Islamic midnight, and show both on the Salah card.")
             }
             group("Hover preview") {
                 Toggle("Glance: next event, exam, Anki, Claude usage and next reading", isOn: $model.previewGlance)
@@ -914,7 +934,12 @@ struct SettingsView: View {
             }
             group("Live activities") {
                 Toggle("Downloads and video exports", isOn: Binding(get: { model.liveActivities }, set: { model.setLiveActivities($0) }))
-                note("Shows download progress and renders (DaVinci Resolve, CapCut, Final Cut) writing to Movies, Desktop, Documents or an external drive, then tells you when they finish.")
+                if model.liveActivities {
+                    Toggle("Alert when a download finishes", isOn: $model.downloadAlerts)
+                    Toggle("Alert when an export finishes", isOn: $model.exportAlerts)
+                    Toggle("Play a sound with these alerts", isOn: $model.activitySounds)
+                }
+                note("Shows download progress and renders (DaVinci Resolve, CapCut, Final Cut) writing to Movies, Desktop, Documents or an external drive. Render caches, proxies and saves under 20 seconds never alert, files that finish together share one alert, and there's no sound while an editor is in front.")
             }
             group("Clipboard") {
                 Toggle("Clipboard history", isOn: Binding(get: { model.clipboardEnabled }, set: { model.setClipboard($0) }))
@@ -932,6 +957,7 @@ struct SettingsView: View {
                 note("Turn off any you don't use; they won't load at all. Each runs in its own web page with your own sign-in. Attending never sees your password.")
             }
             group("Agents") {
+                GuideView(guide: Guides.agents)
                 HStack {
                     Text("Claude Code")
                     Spacer()
@@ -939,14 +965,26 @@ struct SettingsView: View {
                     else if ClaudeHooks.claudeInstalled { PillButton(title: "Connect", symbol: nil) { usageMessage = (try? ClaudeHooks.install()) ?? "Couldn't connect. See Settings › Help." } }
                     else { Text("Not found").foregroundStyle(Theme.tertiary) }
                 }
+                HStack {
+                    Text("Codex approvals")
+                    Spacer()
+                    if CodexHooks.installed { Text("Connected").foregroundStyle(Theme.done) }
+                    else if CodexHooks.codexInstalled { PillButton(title: "Connect", symbol: nil) { codexMessage = (try? CodexHooks.install()) ?? "Couldn't connect. See Settings › Help." } }
+                    else { Text("Not found").foregroundStyle(Theme.tertiary) }
+                }
+                if let codexMessage { note(codexMessage) }
                 Text("Codex and ChatGPT: \(CodexSessionWatcher.available ? "sessions detected automatically" : "not found")")
-                note("Codex sessions show up on their own, from the ChatGPT and Codex apps, the IDE extension or the CLI. Connecting Claude Code adds Attending's hooks to its settings (yours are kept, with a backup); start a new session afterward.")
+                note("Codex sessions show up on their own, from the ChatGPT and Codex apps, the IDE extension or the CLI. Connecting Claude Code adds Attending's hooks to its settings (yours are kept, with a backup); start a new session afterward. Connecting Codex adds one approval hook to ~/.codex/hooks.json, and Codex asks you to trust it before it runs.")
             }
             group("Privacy") {
                 Button("Open local data folder") { NSWorkspace.shared.open(AppPaths.directory) }
                 Button("Clear finished session history…", role: .destructive) { confirmClear = true }
                     .confirmationDialog("Clear finished session history? Active sessions are kept.", isPresented: $confirmClear) { Button("Clear history", role: .destructive) { model.clearHistory() } }
                 note("Attending stores session names, folders and status, never transcripts or credentials. No telemetry.")
+            }
+            group("Setup guides") {
+                note("Step-by-step setup for everything Attending connects to. Each guide is also in its own section above.")
+                ForEach(Guides.all) { GuideView(guide: $0, listed: true) }
             }
             group("Help") {
                 HStack(spacing: 8) {
@@ -1064,6 +1102,38 @@ struct CalendarsSection: View {
     }
 }
 
+struct RemindersSettings: View {
+    @ObservedObject var reminders: RemindersService
+    var body: some View {
+        Toggle("Apple Reminders on Home", isOn: $reminders.enabled)
+        if reminders.denied && reminders.enabled {
+            HStack {
+                Text("Reminders access is off.").foregroundStyle(Theme.attention)
+                Button("Open Privacy Settings") { Onboarding.openPrivacy("Privacy_Reminders") }
+            }
+        }
+        Text("What's due today (and anything overdue) plus the next few coming up, from every list. Click one to check it off in Reminders; type in the field to add one for today. Reminders stay on this Mac.")
+            .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct LectureSettings: View {
+    @ObservedObject var lectures: LectureDay
+    @ObservedObject var calendar: CalendarService
+    var body: some View {
+        Toggle("Classes in the Today card", isOn: $lectures.enabled)
+        if lectures.enabled {
+            Picker("Classes come from", selection: $lectures.calendarName) {
+                Text("Any calendar (by title)").tag("")
+                ForEach(calendar.calendarNames, id: \.self) { Text($0).tag($0) }
+            }.frame(maxWidth: 380)
+            Toggle("Tomorrow's classes and pre-reads at 8 PM", isOn: $lectures.nightSummary)
+            Text("Without a calendar picked, events with words like lecture, lab, PBL, OMM or anatomy count as classes. Pre-reads come from the event notes (\"Pre-read: chapter 12\") plus the next chapter in your tracker. Classes check off as they end.")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 struct BoardsSettings: View {
     @ObservedObject var model: AppModel
     @ObservedObject var exams: ExamStore
@@ -1077,7 +1147,8 @@ struct BoardsSettings: View {
                 Stepper("Red at \(exams.redDays) days", value: $exams.redDays, in: 1...60, step: 1)
             }
             Toggle("Exam week mode", isOn: $model.examWeek)
-            Text("Home shows only the countdown, readings, timer, Anki and Salah, and your Focus shortcut (Automation) runs and stays on.")
+            Toggle("Turn it on automatically in the last 7 days before an exam (optional)", isOn: $model.autoExamWeek)
+            Text("Home shows only the countdown, readings, timer, Anki and Salah; the closed notch shows the countdown, and the hover preview just the exam, Anki and today's goal. Alerts that can wait (agents finishing, updates, usage) hold off, and your Focus shortcut (Automation) runs and stays on. It turns itself off after the exam; turning it off by hand keeps it off for that exam.")
                 .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
             Toggle("Show the countdown in the closed notch", isOn: $exams.pinToNotch)
             Toggle("Milestone alerts (100, 60, 30, 14, 7, 3 and 1 days)", isOn: $exams.milestoneAlerts)

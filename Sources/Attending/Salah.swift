@@ -110,15 +110,29 @@ import CoreLocation
         if let upcoming = Prayer.obligatory.first(where: { (times[$0] ?? .distantPast) > now }) { return (upcoming, times[upcoming]!) }
         return tomorrowFajr.map { (.fajr, $0) }
     }
+    /// Islamic midnight (halfway from sunset to Fajr): the end of Maghrib and Isha for Shia methods.
+    var midnight: Date? {
+        guard let sunset = times[.sunset], let tomorrowFajr else { return nil }
+        return PrayerTimes.midnight(sunset: sunset, nextFajr: tomorrowFajr)
+    }
     /// When `prayer`'s time ends: sunrise for Fajr, the next prayer otherwise, midnight-ish for Isha (next Fajr).
+    /// Shia methods share the times: Dhuhr and Asr until sunset, Maghrib and Isha until Islamic midnight.
     func end(of prayer: Prayer) -> Date? {
-        switch prayer {
+        if method.isShia {
+            switch prayer {
+            case .fajr: return times[.sunrise]
+            case .dhuhr, .asr: return times[.sunset]
+            case .maghrib, .isha: return midnight
+            default: return nil
+            }
+        }
+        return switch prayer {
         case .fajr: times[.sunrise]
         case .dhuhr: times[.asr]
         case .asr: times[.maghrib]
         case .maghrib: times[.isha]
         case .isha: tomorrowFajr
-        case .sunrise: nil
+        case .sunrise, .sunset: nil
         }
     }
     func toggle(_ prayer: Prayer) {
@@ -152,11 +166,17 @@ import CoreLocation
         let now = Date()
         var events: [(Date, () -> Void)] = []
         if let next { let (prayer, time) = next; events.append((time, { [weak self] in self?.onPrayerTime?(prayer, time) })) }
-        if let current, let end = end(of: current), !prayed.contains(current) {
+        // With Shia timing, Dhuhr stays due until sunset even after Asr begins (and Maghrib until midnight).
+        let due: Prayer? = {
+            guard method.isShia, let current else { return current }
+            let pair: [Prayer] = current == .asr ? [.dhuhr, .asr] : current == .isha ? [.maghrib, .isha] : [current]
+            return pair.first { !prayed.contains($0) } ?? current
+        }()
+        if let due, let end = end(of: due), !prayed.contains(due) {
             let warn = end.addingTimeInterval(-15 * 60)
             if warn > now { events.append((warn, { [weak self] in
-                guard let self, !prayed.contains(current) else { return }
-                onEndingSoon?(current, end)
+                guard let self, !prayed.contains(due) else { return }
+                onEndingSoon?(due, end)
             })) }
         }
         if jummahReminder, let jummah = jummahToday {

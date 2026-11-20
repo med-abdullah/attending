@@ -67,6 +67,408 @@ extension AppDelegate {
         // Moves this copy without asking (point ATTENDING_APPLICATIONS_DIR at a test folder).
         do { try MoveToApplications.move(Bundle.main.bundleURL) } catch { print("MOVE failed: \(error.localizedDescription)"); fflush(stdout); NSApp.terminate(nil) }
     }
+    if CommandLine.arguments.contains("--study-test") {
+        // The 1.2 study features: page reading, pre-read finding, weak spots, lecture day,
+        // exam week and a short block. Prints counts and results only, never event titles.
+        Task {
+            func say(_ text: String) { print(text); fflush(stdout) }
+            let cases: [(String, Int, Int?)] = [("Item 12 of 40", 40, 12), ("UWorld - Question 7 / 40", 40, 7), ("Q3 of 10", 10, 3), ("Item 12 of 40", 20, nil), ("Chapter 3 of 12", 12, nil), ("Item 41 of 40", 40, nil)]
+            say("READER " + cases.map { QuestionReader.match($0.0, total: $0.1) == $0.2 ? "ok" : "FAIL(\($0.0))" }.joined(separator: " "))
+            let notes: [(String?, Bool)] = [("Pre-read: Guyton ch. 26", true), ("Zoom: https://zoom.us/j/1\nPlease read chapter 4 before class", true), ("Room 204", false), (nil, false), ("https://canvas.example.edu/prep", false)]
+            say("PREREAD " + notes.map { (LectureDay.preRead(in: $0.0) != nil) == $0.1 ? "ok" : "FAIL(\($0.0 ?? "nil"))" }.joined(separator: " "))
+            let titles: [(String, Bool)] = [("Cardio Lecture 12", true), ("Anatomy Lab", true), ("PBL Group 4", true), ("Collab call", false), ("Dentist", false), ("OMM", true)]
+            say("CLASSES " + titles.map { model.lectures.isClass(UpcomingEvent(title: $0.0, start: Date(), end: Date())) == $0.1 ? "ok" : "FAIL(\($0.0))" }.joined(separator: " "))
+            let topics = WeakTopics()
+            topics.showDemo(["Renal": 4, "Micro": 2, "Pharm": 3, "Cardio": 1])
+            say("WEAK \(topics.weakest().map { "\($0.subject)=\($0.count)" }.joined(separator: ",")) week=\(topics.missedThisWeek())")
+            try? await Task.sleep(for: .seconds(4))
+            let today = model.lectures.classes(on: Date(), from: model.calendar)
+            let tomorrow = model.lectures.classes(on: Date().addingTimeInterval(86400), from: model.calendar)
+            if CommandLine.arguments.contains("--week-events") {
+                for offset in 0..<7 {
+                    let day = Calendar.current.startOfDay(for: Date().addingTimeInterval(Double(offset) * 86400))
+                    for event in model.calendar.events(from: day, to: day.addingTimeInterval(86400)) {
+                        say("EVENT +\(offset)d \(event.start.formatted(date: .omitted, time: .shortened)) [\(event.calendarTitle ?? "-")] \(event.title) class=\(model.lectures.isClass(event)) notes=\(event.notes?.isEmpty == false)")
+                    }
+                }
+            }
+            say("LECTURES calendar=\(model.calendarEnabled) today=\(today.count) tomorrow=\(tomorrow.count) preReads=\(tomorrow.filter { $0.preRead != nil }.count) shown=\(model.lectures.shownDay(from: model.calendar).map { Calendar.current.isDateInToday($0.day) ? "today" : "tomorrow" } ?? "none")")
+            for _ in 0..<15 where model.sheets.primaryTracker == nil && !model.sheets.trackers.isEmpty { try? await Task.sleep(for: .seconds(1)) }
+            let target = model.examWeekTarget
+            say("EXAMWEEK auto=\(model.autoExamWeek) on=\(model.examWeek) target=\(target.map { "\($0.name) in \(BoardsMath.calendarDays(from: Date(), to: $0.date))d" } ?? "none") wing=\(model.wingCountdown?.text ?? "none")")
+            let block = model.block
+            let saved = (block.questions, block.minutes)
+            block.questions = 4; block.minutes = 1
+            block.start()
+            let start = block.run!
+            block.next(); block.next()
+            say("BLOCK q=\(block.run!.current)/\(start.total) ahead=\(block.ahead()) per=\(Int(start.perQuestion))s wing=\(model.idleWing > 34)")
+            block.previous()
+            block.end()
+            say("BLOCK end answered=\(block.result?.answered ?? -1) (expect 1) running=\(block.running)")
+            block.result = nil
+            block.questions = saved.0; block.minutes = saved.1
+            NSApp.terminate(nil)
+        }
+    }
+    if let index = CommandLine.arguments.firstIndex(of: "--study-shots"), index + 1 < CommandLine.arguments.count {
+        // Screenshots of the 1.2 study features with sample data that's never saved.
+        let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+        Task {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            func wait(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
+            @MainActor func shoot(_ name: String) { snapshot(to: directory.appendingPathComponent("\(name).png")) }
+            model.holdOpen = true
+            await wait(2.5)
+            model.calendar.titleOverride = nil
+            let today = Calendar.current.startOfDay(for: Date())
+            func at(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date { today.addingTimeInterval(Double(day) * 86400 + Double(hour) * 3600 + Double(minute) * 60) }
+            let hour = Calendar.current.component(.hour, from: Date())
+            model.lectures.showDemo([
+                .init(id: "a", title: "Renal Physiology Lecture", start: at(0, max(0, hour - 2)), end: at(0, max(0, hour - 1)), location: "Room 1"),
+                .init(id: "b", title: "Anatomy Lab: Retroperitoneum", start: at(0, hour, 30), end: at(0, hour + 1, 30), location: "Lab B", preRead: "Pre-read: Netter plates 312–318"),
+                .init(id: "c", title: "PBL Case 6", start: at(0, hour + 2), end: at(0, hour + 3)),
+                .init(id: "d", title: "Cardio Lecture 14", start: at(1, 8), end: at(1, 9), preRead: "Read Guyton ch. 20 before class"),
+                .init(id: "e", title: "OMM Lab", start: at(1, 10), end: at(1, 12)),
+                .init(id: "f", title: "Pharmacology: Diuretics", start: at(1, 13), end: at(1, 14), preRead: "Prep: watch the diuretics module"),
+            ])
+            model.weakTopics.showDemo(["Renal": 7, "Micro": 5, "Pharm": 4, "Cardio": 2, "Biochem": 1])
+            // Home with today's classes.
+            model.selectedTab = .home; model.setMode(.expanded)
+            await wait(1.5); shoot("home-classes")
+            // Study tab with a block under way.
+            model.block.showDemo(current: 18, total: 40, minutesIn: 24, minutes: 60)
+            model.objectWillChange.send(); model.onModeChange?()
+            model.selectedTab = .study
+            await wait(1.5); shoot("study-block")
+            @MainActor func render<V: View>(_ name: String, width: CGFloat, _ view: V) {
+                let renderer = ImageRenderer(content: view.frame(width: width).padding(16).background(Theme.background).environment(\.colorScheme, .dark))
+                renderer.scale = 2
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: directory.appendingPathComponent("\(name).png"))
+                }
+            }
+            render("card-block-running", width: 340, BlockCard(model: model, block: model.block))
+            render("card-weak", width: 290, WeakTopicsCard(model: model, topics: model.weakTopics))
+            // Hover preview and the closed notch during the block.
+            model.setMode(.preview); await wait(1.2); shoot("preview-block")
+            model.setMode(.idle); await wait(1.2); shoot("wing-block")
+            // The block's result, ready for tagging misses.
+            model.block.cancel()
+            model.block.result = .init(total: 40, answered: 40, elapsed: 3390, timeUp: false)
+            render("card-block-result", width: 340, BlockCard(model: model, block: model.block))
+            model.block.result = nil
+            render("card-block-setup", width: 340, BlockCard(model: model, block: model.block))
+            model.block.result = .init(total: 40, answered: 40, elapsed: 3390, timeUp: false)
+            model.selectedTab = .study; model.setMode(.expanded)
+            await wait(1.5); shoot("study-result")
+            model.block.result = nil
+            // Exam week: the quiet hover preview and wing.
+            let shortcuts = (model.focusStartShortcut, model.focusEndShortcut)
+            model.focusStartShortcut = ""; model.focusEndShortcut = ""
+            let wasExamWeek = model.examWeek
+            model.examWeek = true
+            model.setMode(.preview); await wait(1.2); shoot("preview-examweek")
+            model.examWeek = wasExamWeek
+            model.focusStartShortcut = shortcuts.0; model.focusEndShortcut = shortcuts.1
+            // Tomorrow's summary alert.
+            model.setMode(.idle); await wait(0.8)
+            model.raise(NotchAlert(title: "Tomorrow: 3 classes, 2 pre-reads", subtitle: "First at 8:00 AM · Cardio Lecture 14", symbol: "books.vertical.fill", color: Theme.working, target: .home, actionTitle: "Show", action: {}))
+            await wait(1.2); shoot("alert-tomorrow")
+            model.alert = nil
+            NSApp.terminate(nil)
+        }
+    }
+    if let index = CommandLine.arguments.firstIndex(of: "--approval-auto"), index + 1 < CommandLine.arguments.count {
+        // Answers the first approval request (allow or deny) and prints what arrived, for bridge tests.
+        let allow = CommandLine.arguments[index + 1] == "allow"
+        Task {
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let request = model.claudeApprovals.first else { continue }
+                print("APPROVAL provider=\(request.provider.rawValue) tool=\(request.toolName) command=\(request.command ?? "-") alert=\(model.alert?.title ?? "-")"); fflush(stdout)
+                model.respondClaude(request, decision: allow ? .allowOnce : .deny)
+                try? await Task.sleep(for: .seconds(1))
+                break
+            }
+            // Merge check: an existing hook is kept and the entry is added once.
+            if let bridge = ClaudeHooks.bridge {
+                let first = (try? CodexHooks.merged(["hooks": ["PermissionRequest": [["matcher": "Bash", "hooks": [["type": "command", "command": "/usr/local/bin/policy"]]]], "Stop": [["hooks": [["type": "command", "command": "say done"]]]]]], bridge: bridge.path)) ?? [:]
+                let twice = (try? CodexHooks.merged(first, bridge: bridge.path)) ?? [:]
+                let entries = ((twice["hooks"] as? [String: Any])?["PermissionRequest"] as? [[String: Any]]) ?? []
+                print("MERGE groups=\(entries.count) stop=\(((twice["hooks"] as? [String: Any])?["Stop"] as? [Any])?.count ?? 0) idempotent=\(NSDictionary(dictionary: first).isEqual(to: twice)) installed=\(CodexHooks.installed)"); fflush(stdout)
+            }
+            NSApp.terminate(nil)
+        }
+    }
+    if CommandLine.arguments.contains("--activity-quiet-test") {
+        // Writes sample files into ~/Movies/Attending activity test and prints which alerts appear:
+        // a render cache (ignored), a 6 s save (no alert), and two 25 s exports that pause
+        // midway and finish together (one shared alert). The folder is removed afterward.
+        Task {
+            func say(_ text: String) { print(text); fflush(stdout) }
+            let paths = ["/Users/x/Movies/CacheClip/a.mov", "/Volumes/SSK/Project/OptimizedMedia/b.mov", "/Users/x/Movies/Edit.fcpbundle/Render Files/c.mov", "/Users/x/Movies/Export 1.mp4", "/Volumes/SSK/TikTok/final.mov"]
+            say("WORKING " + paths.map { "\(($0 as NSString).lastPathComponent)=\(ActivityCenter.isWorkingFile($0))" }.joined(separator: " "))
+            let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies/Attending activity test", isDirectory: true)
+            let cache = folder.appendingPathComponent("CacheClip", isDirectory: true)
+            try? FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            model.setLiveActivities(true)
+            try? await Task.sleep(for: .seconds(2))
+            var seen: [String] = []
+            let watch = Task { @MainActor in
+                while !Task.isCancelled {
+                    if let title = model.alert?.title, seen.last != title { seen.append(title); say("ALERT \(title) · \(model.alert?.subtitle ?? "")") }
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+            }
+            // Written by a separate shell process, as an editor would (the watcher ignores Attending's own writes).
+            func grow(_ url: URL, seconds: Int, pauseAt: Int? = nil) async {
+                let pause = pauseAt.map { "[ $i -eq \($0) ] && sleep 12; " } ?? ""
+                let script = "f=\"$1\"; : > \"$f\"; i=0; while [ $i -lt \(seconds) ]; do \(pause)head -c 200000 /dev/zero >> \"$f\"; sleep 1; i=$((i+1)); done"
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                process.arguments = ["-c", script, "sh", url.path]
+                try? process.run()
+                while process.isRunning { try? await Task.sleep(for: .milliseconds(300)) }
+            }
+            async let cacheFile: Void = grow(cache.appendingPathComponent("render cache.mov"), seconds: 25)
+            async let shortSave: Void = grow(folder.appendingPathComponent("quick save.mov"), seconds: 6)
+            async let exportA: Void = grow(folder.appendingPathComponent("Export A.mp4"), seconds: 25, pauseAt: 10)
+            async let exportB: Void = grow(folder.appendingPathComponent("Export B.mp4"), seconds: 27)
+            _ = await (cacheFile, shortSave, exportA, exportB)
+            try? await Task.sleep(for: .seconds(28))
+            watch.cancel()
+            say("TRACKED \(model.activities.activities.filter { $0.url.path.contains("Attending activity test") }.map { "\($0.name)=\($0.state)" }.joined(separator: ", "))")
+            say("ALERTS \(seen.count)")
+            try? FileManager.default.removeItem(at: folder)
+            NSApp.terminate(nil)
+        }
+    }
+    if let index = CommandLine.arguments.firstIndex(of: "--canvas-test"), index + 2 < CommandLine.arguments.count {
+        // Connects a separate Canvas client to a test server (address, flag file for a new
+        // announcement) and prints what it read. Run with ATTENDING_DATA_DIR set to a scratch folder.
+        let address = CommandLine.arguments[index + 1], flag = CommandLine.arguments[index + 2]
+        Task {
+            func say(_ text: String) { print(text); fflush(stdout) }
+            let savedSeen = UserDefaults.standard.array(forKey: "canvasSeen")
+            UserDefaults.standard.removeObject(forKey: "canvasSeen")
+            let canvas = CanvasService()
+            var alerts: [String] = []
+            canvas.onNewAnnouncement = { alerts.append($0.title) }
+            say("BADTOKEN \(await canvas.connect(address: address, token: "wrong") ?? "accepted")")
+            say("BADADDRESS \(await canvas.connect(address: "not a url", token: "x") ?? "accepted")")
+            say("CONNECT \(await canvas.connect(address: address, token: "test-token") ?? "ok") user=\(canvas.userName ?? "-")")
+            for _ in 0..<20 where canvas.updatedAt == nil { try? await Task.sleep(for: .milliseconds(250)) }
+            say("ANNOUNCEMENTS \(canvas.announcements.map { "\($0.title)|\($0.course)|unread=\($0.unread)|\($0.preview)" })")
+            say("DUE \(canvas.due.map { "\($0.title)|\($0.kind)|\($0.url?.absoluteString ?? "-")" })")
+            say("FEED \(canvas.calendarFeed ?? "-") alertsOnFirstFetch=\(alerts.count)")
+            FileManager.default.createFile(atPath: flag, contents: Data())
+            await canvas.refresh()
+            say("NEW alerts=\(alerts)")
+            await canvas.refresh()
+            say("AGAIN alerts=\(alerts.count)")
+            let file = AppPaths.directory.appendingPathComponent("canvas.json")
+            let mode = (try? FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int).map { String($0, radix: 8) } ?? "-"
+            say("TOKENFILE mode=\(mode) in=\(AppPaths.directory.path.hasPrefix("/private/tmp") || AppPaths.directory.path.hasPrefix("/tmp"))")
+            canvas.disconnect()
+            say("DISCONNECT fileGone=\(!FileManager.default.fileExists(atPath: file.path))")
+            if let savedSeen { UserDefaults.standard.set(savedSeen, forKey: "canvasSeen") } else { UserDefaults.standard.removeObject(forKey: "canvasSeen") }
+            NSApp.terminate(nil)
+        }
+    }
+    if let index = CommandLine.arguments.firstIndex(of: "--connect-shots"), index + 1 < CommandLine.arguments.count {
+        // Home and Study with sample Canvas and Reminders (never saved), and the Salah card in Shia timing.
+        let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+        Task {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            @MainActor func render<V: View>(_ name: String, width: CGFloat, _ view: V) {
+                let renderer = ImageRenderer(content: view.frame(width: width).padding(16).background(Theme.background).environment(\.colorScheme, .dark))
+                renderer.scale = 2
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: directory.appendingPathComponent("\(name).png"))
+                }
+            }
+            try? await Task.sleep(for: .seconds(2.5))
+            let now = Date()
+            model.canvas.showDemo(announcements: [
+                .init(id: 1, title: "Exam 3 moved to Room 204", course: "Cardiopulmonary System", posted: now.addingTimeInterval(-5 * 3600), url: nil, preview: "Bring your ID.", unread: true),
+                .init(id: 2, title: "OMM lab slides posted", course: "OMM II", posted: now.addingTimeInterval(-3 * 86400), url: nil, preview: "", unread: false),
+                .init(id: 3, title: "Office hours this week", course: "Clinical Skills", posted: now.addingTimeInterval(-4 * 86400), url: nil, preview: "", unread: false),
+            ], due: [
+                .init(id: "a", title: "Case write-up 4", course: "Cardiopulmonary System", due: now.addingTimeInterval(20 * 3600), kind: "Assignment", url: nil),
+                .init(id: "b", title: "OMM quiz 6", course: "OMM II", due: now.addingTimeInterval(4 * 86400), kind: "Quiz", url: nil),
+                .init(id: "c", title: "Ethics reflection", course: "Clinical Skills", due: now.addingTimeInterval(6 * 86400), kind: "Discussion", url: nil),
+            ])
+            let today = Calendar.current.startOfDay(for: now)
+            model.reminders.showDemo([
+                .init(id: "1", title: "Email Dr. Patel about shadowing", due: today.addingTimeInterval(-86400), hasTime: false, list: "School", color: .systemOrange, flagged: true),
+                .init(id: "2", title: "Pick up white coat", due: today.addingTimeInterval(17 * 3600), hasTime: true, list: "Personal", color: .systemBlue, flagged: false),
+                .init(id: "3", title: "Renew BLS", due: today.addingTimeInterval(3 * 86400), hasTime: false, list: "School", color: .systemOrange, flagged: false),
+            ])
+            let wasEnabled = model.reminders.enabled
+            render("canvas", width: 360, CanvasCard(canvas: model.canvas))
+            render("canvas-compact", width: 360, CanvasCard(canvas: model.canvas, compact: true))
+            model.reminders.enabled = true
+            render("reminders", width: 300, RemindersCard(reminders: model.reminders))
+            let method = model.salah.method
+            model.salah.method = .jafari
+            try? await Task.sleep(for: .seconds(1))
+            render("salah-shia", width: 300, SalahCard(salah: model.salah))
+            print("SHIA \(model.salah.times[.sunset].map { $0.formatted(date: .omitted, time: .shortened) } ?? "-") maghrib=\(model.salah.times[.maghrib].map { $0.formatted(date: .omitted, time: .shortened) } ?? "-") midnight=\(model.salah.midnight.map { $0.formatted(date: .omitted, time: .shortened) } ?? "-") dhuhrEnds=\(model.salah.end(of: .dhuhr).map { $0.formatted(date: .omitted, time: .shortened) } ?? "-")"); fflush(stdout)
+            model.salah.method = method
+            model.reminders.enabled = wasEnabled
+            NSApp.terminate(nil)
+        }
+    }
+    if let index = CommandLine.arguments.firstIndex(of: "--asked-assets"), index + 1 < CommandLine.arguments.count {
+        // Every screen for the "you asked, I built it" video, with sample data that's never saved.
+        let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+        Task {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            func wait(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
+            @MainActor func shoot(_ name: String) { snapshot(to: directory.appendingPathComponent("\(name).png")) }
+            @MainActor func render<V: View>(_ name: String, width: CGFloat, _ view: V) {
+                let renderer = ImageRenderer(content: view.frame(width: width).environment(\.colorScheme, .dark))
+                renderer.scale = 3
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: directory.appendingPathComponent("\(name).png"))
+                }
+            }
+            model.holdOpen = true
+            model.cleanScreen.set(false)
+            await wait(2.5)
+            let now = Date(), today = Calendar.current.startOfDay(for: now)
+            let shortcuts = (model.focusStartShortcut, model.focusEndShortcut)
+            model.focusStartShortcut = ""; model.focusEndShortcut = ""
+            // Sample study progress for the glance tiles (never saved).
+            model.sheets.showDemo(done: 0.62)
+            var anki = AnkiService.Stats()
+            anki.dueReviews = 38; anki.learning = 6; anki.reviewedToday = 312; anki.minutesToday = 74; anki.streak = 47; anki.dueTomorrow = 140
+            anki.week = [286, 341, 298, 402, 330, 275, 312]
+            model.anki.demoStats = anki
+            await wait(0.5)
+            // 1. A block under way: the wings and the hover strip.
+            model.block.showDemo(current: 18, total: 40, minutesIn: 24, minutes: 60)
+            model.objectWillChange.send(); model.onModeChange?()
+            model.setMode(.idle); await wait(1.2); shoot("idle-block")
+            model.setMode(.preview); await wait(1.2); shoot("preview-block")
+            model.block.cancel()
+            model.setMode(.idle); await wait(1)
+            // 2. Canvas: the announcement dropping down, then the card.
+            @MainActor func drop(_ name: String, _ alert: NotchAlert) async {
+                model.setMode(.idle); await wait(0.8)
+                model.raise(alert); await wait(1.3); shoot(name)
+                model.alert = nil; model.setMode(.idle); await wait(0.9)
+            }
+            await drop("alert-canvas", NotchAlert(title: "Exam 3 moved to Room 204", subtitle: "Cardiopulmonary System · Canvas announcement", symbol: "megaphone.fill", color: Theme.working, target: .study, actionTitle: "Open", action: {}))
+            model.canvas.showDemo(announcements: [
+                .init(id: 1, title: "Exam 3 moved to Room 204", course: "Cardiopulmonary System", posted: now.addingTimeInterval(-600), url: nil, preview: "", unread: true),
+                .init(id: 2, title: "OMM lab slides posted", course: "OMM II", posted: now.addingTimeInterval(-3 * 86400), url: nil, preview: "", unread: false),
+            ], due: [
+                .init(id: "a", title: "Case write-up 4", course: "Cardiopulmonary System", due: now.addingTimeInterval(20 * 3600), kind: "Assignment", url: nil),
+                .init(id: "b", title: "OMM quiz 6", course: "OMM II", due: now.addingTimeInterval(4 * 86400), kind: "Quiz", url: nil),
+                .init(id: "c", title: "Ethics reflection", course: "Clinical Skills", due: now.addingTimeInterval(6 * 86400), kind: "Discussion", url: nil),
+            ])
+            render("card-canvas", width: 380, CanvasCard(canvas: model.canvas).padding(10).background(Color.black))
+            // 3. Lecture day: tomorrow's summary, then the classes in the Today card.
+            await drop("alert-tomorrow", NotchAlert(title: "Tomorrow: 3 classes, 3 pre-reads", subtitle: "First at 8:00 AM · Cardio Lecture 14", symbol: "books.vertical.fill", color: Theme.working, target: .home, actionTitle: "Show", action: {}))
+            func at(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date { today.addingTimeInterval(Double(day) * 86400 + Double(hour) * 3600 + Double(minute) * 60) }
+            model.lectures.showDemo([
+                .init(id: "d", title: "Cardio Lecture 14", start: at(1, 8), end: at(1, 9), preRead: "Read Guyton ch. 20 before class"),
+                .init(id: "e", title: "OMM Lab", start: at(1, 10), end: at(1, 12)),
+                .init(id: "f", title: "Pharmacology: Diuretics", start: at(1, 13), end: at(1, 14), preRead: "Prep: watch the diuretics module"),
+            ])
+            render("card-classes", width: 330, Card(padding: 12) { ClassesSection(model: model, lectures: model.lectures, calendar: model.calendar, sheets: model.sheets) }.padding(10).background(Color.black))
+            // 4. Weak spots: misses tapped in on the beat, then the week's ranking.
+            let taps: [[String: Int]] = [[:], ["Cardio": 1], ["Cardio": 1, "Renal": 1], ["Cardio": 1, "Renal": 2], ["Cardio": 1, "Renal": 2, "Micro": 1], ["Cardio": 1, "Renal": 3, "Micro": 1]]
+            for (i, counts) in taps.enumerated() {
+                render("tagger-\(i)", width: 380, Card(padding: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionLabel(text: "Block finished · 40 of 40")
+                        Text("What did you miss? Tap a subject for each one.").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                        MissTagger(counts: .constant(counts))
+                    }
+                }.padding(10).background(Color.black))
+            }
+            model.weakTopics.showDemo(["Renal": 7, "Micro": 5, "Pharm": 4, "Cardio": 2])
+            render("card-weak", width: 330, WeakTopicsCard(model: model, topics: model.weakTopics).padding(10).background(Color.black))
+            // 5. Apple Reminders, before and after one is checked off.
+            let reminders: [RemindersService.Item] = [
+                .init(id: "1", title: "Email Dr. Patel about shadowing", due: today.addingTimeInterval(-86400), hasTime: false, list: "School", color: .systemOrange, flagged: true),
+                .init(id: "2", title: "Pick up white coat", due: today.addingTimeInterval(17 * 3600), hasTime: true, list: "Personal", color: .systemBlue, flagged: false),
+                .init(id: "3", title: "Renew BLS", due: today.addingTimeInterval(3 * 86400), hasTime: false, list: "School", color: .systemOrange, flagged: false),
+            ]
+            let remindersWere = model.reminders.enabled
+            model.reminders.showDemo(reminders)
+            model.reminders.enabled = true
+            render("card-reminders", width: 330, RemindersCard(reminders: model.reminders, showsAdd: false).padding(10).background(Color.black))
+            // 6. Exam week: it turns itself on, and the notch goes quiet.
+            model.exams.showDemo([BoardExam(kind: .block, date: today.addingTimeInterval(5 * 86400 + 8 * 3600), customName: "Cardio block")])
+            await drop("alert-examweek", NotchAlert(title: "Exam week is on", subtitle: "Exam 3 is in 3 days. The notch stays quiet until it's over.", symbol: "moon.fill", color: Theme.attention, target: .home, actionTitle: "Turn off", action: {}))
+            let examWeekWas = model.examWeek
+            model.examWeek = true
+            model.setMode(.idle); await wait(1.2); shoot("idle-examweek")
+            model.setMode(.preview); await wait(1.2); shoot("preview-examweek")
+            model.examWeek = examWeekWas
+            model.focusStartShortcut = shortcuts.0; model.focusEndShortcut = shortcuts.1
+            model.reminders.enabled = remindersWere
+            model.setMode(.idle); await wait(0.5)
+            print("ASKED done"); fflush(stdout)
+            NSApp.terminate(nil)
+        }
+    }
+    if CommandLine.arguments.contains("--mission-control-check") {
+        // The detection against sample window lists: a visible Dock bar, Mission Control, other apps.
+        func window(_ owner: String, _ layer: Int, _ w: CGFloat, _ h: CGFloat) -> [String: Any] {
+            [kCGWindowOwnerName as String: owner, kCGWindowLayer as String: layer, kCGWindowBounds as String: CGRect(x: 0, y: 0, width: w, height: h).dictionaryRepresentation]
+        }
+        let screen = [CGSize(width: 1710, height: 1112)], two = [CGSize(width: 1710, height: 1112), CGSize(width: 2560, height: 1440)]
+        let cases: [(String, [[String: Any]], [CGSize], Bool)] = [
+            ("visible Dock bar", [window("Dock", 20, 1710, 78)], screen, false),
+            ("Dock on the side", [window("Dock", 20, 80, 900)], screen, false),
+            ("Mission Control", [window("Dock", 20, 1710, 1112)], screen, true),
+            ("Mission Control + Dock bar", [window("Dock", 20, 1710, 78), window("Dock", 20, 1710, 1112)], screen, true),
+            ("Mission Control on external display", [window("Dock", 20, 2560, 1440)], two, true),
+            ("full-screen app at layer 20", [window("Safari", 20, 1710, 1112)], screen, false),
+            ("nothing", [], screen, false),
+        ]
+        print("MISSIONCONTROL " + cases.map { "\($0.0)=\(AppDelegate.isMissionControl($0.1, screens: $0.2) == $0.3 ? "ok" : "FAIL")" }.joined(separator: ", ") + " now=\(AppDelegate.missionControlOpen)"); fflush(stdout)
+        NSApp.terminate(nil)
+    }
+    if CommandLine.arguments.contains("--mission-control-test") {
+        // Opens the hover preview, then Mission Control for two seconds, printing the island's state.
+        Task {
+            func say(_ text: String) { print(text); fflush(stdout) }
+            func toggle() { _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: ["-a", "Mission Control"]) }
+            try? await Task.sleep(for: .seconds(2))
+            model.setMode(.preview)
+            try? await Task.sleep(for: .seconds(0.6))
+            say("BEFORE mode=\(model.mode) missionControl=\(AppDelegate.missionControlOpen)")
+            toggle()
+            try? await Task.sleep(for: .seconds(1.2))
+            say("DURING mode=\(model.mode) missionControl=\(AppDelegate.missionControlOpen)")
+            toggle()
+            try? await Task.sleep(for: .seconds(1.5))
+            say("AFTER mode=\(model.mode) missionControl=\(AppDelegate.missionControlOpen)")
+            NSApp.terminate(nil)
+        }
+    }
+    if CommandLine.arguments.contains("--reader-test") {
+        // Starts a 4-question block and prints the question number read from the front window for 20 s.
+        Task {
+            let block = model.block
+            let saved = (block.questions, block.minutes)
+            block.questions = 4; block.minutes = 2
+            block.start()
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .seconds(2))
+                print("READ front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") q=\(block.run?.current ?? -1) reading=\(block.run?.reading ?? false)"); fflush(stdout)
+            }
+            block.cancel()
+            block.questions = saved.0; block.minutes = saved.1
+            NSApp.terminate(nil)
+        }
+    }
     if CommandLine.arguments.contains("--tracker-pick-test") {
         // Picks each tracker in turn and prints what the Study tab, hover glance and Home follow.
         Task {
@@ -136,9 +538,22 @@ extension AppDelegate {
         print(line); fflush(stdout)
         NSApp.terminate(nil)
     }
+    if CommandLine.arguments.contains("--whats-new") {
+        // Shows What's New for this version and, with --shot PATH, saves it as a PNG and quits.
+        print("WHATSNEW version=\(WhatsNew.version) items=\(WhatsNew.highlights().count) parse=\(WhatsNew.section("1.0.0", in: "## 1.1.0\n- a\n## 1.0.0\n- **One:** x\n  more\n- two\n## 0.9\n- z") == ["**One:** x more", "two"])"); fflush(stdout)
+        model.whatsNew.show()
+        if let index = CommandLine.arguments.firstIndex(of: "--shot"), index + 1 < CommandLine.arguments.count {
+            let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+            Task { try? await Task.sleep(for: .seconds(2)); model.whatsNew.snapshot(to: url); NSApp.terminate(nil) }
+        }
+    }
     if CommandLine.arguments.contains("--onboarding") {
         // Shows the welcome (or, with --setup, the checklist) regardless of whether it was seen.
         model.onboarding.show(step: CommandLine.arguments.contains("--setup") ? .setup : .welcome)
+        if let index = CommandLine.arguments.firstIndex(of: "--shot"), index + 1 < CommandLine.arguments.count {
+            let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+            Task { try? await Task.sleep(for: .seconds(2)); model.onboarding.snapshot(to: url); NSApp.terminate(nil) }
+        }
     }
     if CommandLine.arguments.contains("--diagnostics") {
         print(Diagnostics.summary()); fflush(stdout)

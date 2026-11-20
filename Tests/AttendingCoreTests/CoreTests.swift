@@ -258,6 +258,19 @@ func XCTFail(_ message: String, file: StaticString = #file, line: UInt = #line) 
         check("2026-09-29", 27.50, -82.57, "America/New_York", .isna, .standard, ["06:18", "07:22", "13:21", "16:45", "19:19", "20:22"])
         check("2026-09-29", 27.50, -82.57, "America/New_York", .mwl, .standard, ["06:05", "07:22", "13:21", "16:45", "19:19", "20:32"])
         check("2026-09-29", 27.50, -82.57, "America/New_York", .ummAlQura, .standard, ["06:02", "07:22", "13:21", "16:45", "19:19", "20:49"])
+        // Shia methods against Aladhan (methods 0 and 7, Jafari midnight): Maghrib after the redness.
+        check("2026-09-29", 27.50, -82.57, "America/New_York", .jafari, .standard, ["06:14", "07:22", "13:21", "16:46", "19:33", "20:18"])
+        check("2026-09-29", 27.50, -82.57, "America/New_York", .tehran, .standard, ["06:06", "07:22", "13:21", "16:46", "19:35", "20:18"])
+        do {
+            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "America/New_York")!
+            let day = calendar.date(from: DateComponents(year: 2026, month: 9, day: 29, hour: 12))!
+            let today = PrayerTimes.times(on: day, latitude: 27.50, longitude: -82.57, timeZone: calendar.timeZone, method: .jafari)
+            let tomorrow = PrayerTimes.times(on: day.addingTimeInterval(86400), latitude: 27.50, longitude: -82.57, timeZone: calendar.timeZone, method: .jafari)
+            let midnight = PrayerTimes.midnight(sunset: today[.sunset]!, nextFajr: tomorrow[.fajr]!)
+            let parts = calendar.dateComponents([.hour, .minute], from: midnight)
+            if abs((parts.hour! * 60 + parts.minute!) - 46) > 1 { XCTFail("Jafari midnight: got \(parts.hour!):\(parts.minute!), expected 00:46") }
+            if abs(today[.sunset]!.timeIntervalSince(PrayerTimes.times(on: day, latitude: 27.50, longitude: -82.57, timeZone: calendar.timeZone, method: .isna)[.maghrib]!)) > 60 { XCTFail("sunset should match Sunni Maghrib") }
+        }
         // London in winter, Hanafi Asr.
         check("2027-01-15", 51.51, -0.13, "Europe/London", .mwl, .hanafi, ["05:59", "08:00", "12:10", "14:32", "16:21", "18:14"])
     }

@@ -50,6 +50,7 @@ final class NotchPanel: NSPanel {
     private var shutdownStarted = false
     private var shutdownComplete = false
     private var openMonitors: [Any] = []
+    private var pointerCheck: Timer?
     private var observers: [NSObjectProtocol] = []
     private var layoutSubscription: AnyCancellable?
     /// Where the island is (or is animating to), in screen coordinates.
@@ -132,7 +133,10 @@ final class NotchPanel: NSPanel {
         Task { await model.start() }
         model.onboarding.model = model
         DispatchQueue.main.async { [weak self] in
-            if !MoveToApplications.offerIfNeeded() { self?.model.onboarding.showIfNeeded() }
+            if !MoveToApplications.offerIfNeeded() {
+                if Onboarding.done { self?.model.whatsNew.showIfUpdated() }
+                else { UserDefaults.standard.set(WhatsNew.version, forKey: "lastVersionSeen"); self?.model.onboarding.showIfNeeded() }
+            }
         }
         runDevelopmentFlags()
     }
@@ -333,8 +337,23 @@ final class NotchPanel: NSPanel {
         hoverTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .seconds(model.hoverDelay))
-            guard !Task.isCancelled, model.mode == .idle, pointerInIsland else { return }
+            // Mission Control's desktops bar sits under the notch; the island stays closed there.
+            guard !Task.isCancelled, model.mode == .idle, pointerInIsland, !Self.missionControlOpen else { return }
             model.setMode(.preview)
+        }
+    }
+    /// Mission Control (and App Exposé) draw as a full-screen Dock window at layer 20. While
+    /// it's up, the Dock takes the mouse, so the island gets no moves or exits. The Dock bar
+    /// itself is also at layer 20, so only a window covering nearly a whole display counts.
+    static var missionControlOpen: Bool {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return isMissionControl(list, screens: NSScreen.screens.map(\.frame.size))
+    }
+    static func isMissionControl(_ list: [[String: Any]], screens: [CGSize]) -> Bool {
+        list.contains { window in
+            guard (window[kCGWindowOwnerName as String] as? String) == "Dock", (window[kCGWindowLayer as String] as? Int) == 20,
+                  let bounds = (window[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }) else { return false }
+            return screens.contains { bounds.width >= $0.width * 0.9 && bounds.height >= $0.height * 0.9 }
         }
     }
     /// Resting on a tab icon for a moment switches to it, alongside clicking.
@@ -389,7 +408,21 @@ final class NotchPanel: NSPanel {
     private func updateOpenMonitors() {
         openMonitors.forEach { NSEvent.removeMonitor($0) }; openMonitors.removeAll()
         leaveTask?.cancel(); leaveTask = nil
+        pointerCheck?.invalidate(); pointerCheck = nil
         guard model.mode != .idle else { return }
+        // Mouse events stop arriving in some states (Mission Control, a Space switching), so the
+        // pointer is also checked a few times a second while open; an island left open behind
+        // Mission Control closes as soon as the pointer is elsewhere.
+        let check = Timer(timeInterval: 0.35, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.model.mode == .preview && Self.missionControlOpen && !self.model.dragActive { self.model.setMode(.idle); return }
+                self.trackPointer()
+            }
+        }
+        check.tolerance = 0.1
+        RunLoop.main.add(check, forMode: .common)
+        pointerCheck = check
         if let move = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.trackPointer() }
         }) { openMonitors.append(move) }
@@ -449,6 +482,7 @@ final class NotchPanel: NSPanel {
             menu.addItem(withTitle: "Settings…", action: #selector(settings), keyEquivalent: ",").target = self
             menu.addItem(withTitle: model.prompter.running ? "Stop Teleprompter" : "Teleprompter", action: #selector(togglePrompter), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Setup Guide…", action: #selector(setupGuide), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "What's New…", action: #selector(showWhatsNew), keyEquivalent: "").target = self
             let clean = menu.addItem(withTitle: "Clean Screen", action: #selector(toggleCleanScreen), keyEquivalent: "")
             clean.target = self; clean.state = model.cleanScreen.on ? .on : .off
             menu.addItem(.separator())
@@ -462,6 +496,7 @@ final class NotchPanel: NSPanel {
     @objc private func quit() { NSApp.terminate(nil) }
     @objc private func toggleCleanScreen() { model.cleanScreen.toggle() }
     @objc private func setupGuide() { model.onboarding.show(step: .setup) }
+    @objc private func showWhatsNew() { model.whatsNew.show() }
     @objc private func togglePrompter() {
         if model.prompter.running || model.prompter.words > 0 { model.prompter.toggle() } else { model.open(.prompter) }
     }

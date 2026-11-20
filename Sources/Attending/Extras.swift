@@ -12,6 +12,8 @@ struct UpcomingEvent: Equatable {
     var calendarColor: NSColor?
     var joinURL: URL?
     var location: String?
+    var notes: String? = nil
+    var calendarTitle: String? = nil
 }
 
 /// A calendar read from its private iCal (.ics) address, such as Google Calendar's
@@ -40,6 +42,12 @@ struct CalendarFeed: Codable, Identifiable, Equatable {
     private var imminentTask: Task<Void, Never>?
     @Published private(set) var authorized = false
     @Published private(set) var denied = false
+    /// Event calendars by name, for picking which one holds classes.
+    var calendarNames: [String] {
+        var names = authorized ? store.calendars(for: .event).map(\.title) : []
+        names += feeds.map(\.name)
+        return Array(Set(names)).sorted()
+    }
     /// Calendar accounts on this Mac that have event calendars ("iCloud", "Google" and so on).
     @Published private(set) var accounts: [String] = []
     @Published private(set) var feeds: [CalendarFeed] = []
@@ -95,12 +103,15 @@ struct CalendarFeed: Codable, Identifiable, Equatable {
             events += store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
                 .filter { !$0.isAllDay && $0.status != .canceled }
                 .map { UpcomingEvent(title: titleOverride ?? $0.title ?? "Event", start: $0.startDate, end: $0.endDate, calendarColor: $0.calendar.color,
-                                     joinURL: Self.joinLink(in: [$0.url?.absoluteString, $0.location, $0.notes]), location: $0.location) }
+                                     joinURL: Self.joinLink(in: [$0.url?.absoluteString, $0.location, $0.notes]), location: $0.location,
+                                     notes: $0.notes, calendarTitle: $0.calendar.title) }
         }
-        for calendar in parsed.values {
+        for (id, calendar) in parsed {
+            let name = feeds.first { $0.id == id }?.name
             events += calendar.occurrences(from: from, to: to).filter { !$0.event.allDay }.map {
                 UpcomingEvent(title: titleOverride ?? $0.event.title, start: $0.start, end: $0.end, calendarColor: nil,
-                              joinURL: Self.joinLink(in: [$0.event.url, $0.event.location, $0.event.notes]), location: $0.event.location)
+                              joinURL: Self.joinLink(in: [$0.event.url, $0.event.location, $0.event.notes]), location: $0.event.location,
+                              notes: $0.event.notes, calendarTitle: name)
             }
         }
         // The same event can come from an account and a link; keep one.
@@ -131,7 +142,7 @@ struct CalendarFeed: Codable, Identifiable, Equatable {
     // MARK: Calendar links
 
     /// Adds a calendar link (https or webcal) after checking that it reads as a calendar.
-    func addFeed(_ text: String) async -> String? {
+    func addFeed(_ text: String, name: String? = nil) async -> String? {
         var link = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if link.lowercased().hasPrefix("webcal://") { link = "https://" + link.dropFirst("webcal://".count) }
         guard let url = URL(string: link), url.scheme?.lowercased() == "https" else { return "Paste the calendar's iCal link. It starts with https:// or webcal://." }
@@ -139,7 +150,7 @@ struct CalendarFeed: Codable, Identifiable, Equatable {
         switch await Self.download(url) {
         case .failure(let message): return message
         case .success(let calendar):
-            let feed = CalendarFeed(url: link, name: calendar.name ?? url.host ?? "Calendar", updated: Date())
+            let feed = CalendarFeed(url: link, name: name ?? calendar.name ?? url.host ?? "Calendar", updated: Date())
             feeds.append(feed); parsed[feed.id] = calendar
             saveFeeds(); refresh()
             return nil

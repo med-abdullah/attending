@@ -105,13 +105,23 @@ struct ApprovalInbox: View {
                     }
                 } else {
                     approvalCard {
-                        header(request, title: "Wants to use \(request.toolName)")
+                        header(request, title: request.provider == .codex && request.command != nil ? "Wants to run a command" : "Wants to use \(request.toolName)")
                         // Complete input remains inspectable; no truncation hidden behind Allow.
-                        code(request.toolInputJSON)
+                        if request.provider == .codex, let command = request.command {
+                            code(command)
+                            DisclosureGroup("Complete request") { code(request.toolInputJSON) }.font(.system(size: 11))
+                        } else {
+                            code(request.toolInputJSON)
+                        }
                         Text("This allows this one request. Check the full action and target first.").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
                         HStack {
                             PillButton(title: "Deny", symbol: "xmark", tint: Theme.failed) { model.respondClaude(request, decision: .deny) }
                             PillButton(title: "Allow Once", symbol: "checkmark", tint: Theme.done, prominent: true) { model.respondClaude(request, decision: .allowOnce) }
+                            if request.provider == .codex {
+                                Spacer()
+                                Button("Answer in Codex") { model.respondClaude(request, decision: .askInProvider) }
+                                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
+                            }
                         }
                     }
                 }
@@ -169,7 +179,7 @@ struct RequestHeader: View {
                     let left = max(0, Int(request.expiresAt.timeIntervalSince(context.date)))
                     Text("\(left)s").font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
                         .foregroundStyle(left <= 10 ? Theme.attention : Theme.tertiary)
-                        .help("After this, Claude asks in its own window")
+                        .help("After this, \(request.provider.title) asks in its own window")
                 }
             }
             Text("\(request.provider.title) · \(model.state.sessions.first { $0.id == request.provider.rawValue + ":" + request.sessionID }?.title ?? SessionNaming.folderTitle(request.projectPath))")

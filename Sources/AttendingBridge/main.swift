@@ -69,6 +69,10 @@ private func recordLifecycle(_ raw: [String: Any]) {
     }
 }
 
+/// Codex calls the bridge only for its PermissionRequest hook (its sessions are followed
+/// through rollout files), so Codex runs skip lifecycle events and answer in Codex's format.
+private let forCodex = CommandLine.arguments.contains("--codex")
+
 private func makeApprovalEnvelope(_ raw: [String: Any], wait: TimeInterval) -> ApprovalEnvelope? {
     guard raw["hook_event_name"] as? String == "PermissionRequest",
           let session = raw["session_id"] as? String,
@@ -83,7 +87,7 @@ private func makeApprovalEnvelope(_ raw: [String: Any], wait: TimeInterval) -> A
 
     let now = Date()
     let request = ApprovalRequest(
-        provider: .claudeCode,
+        provider: forCodex ? .codex : .claudeCode,
         sessionID: session,
         projectPath: cwd,
         toolName: toolName,
@@ -164,6 +168,19 @@ private func requestApproval(_ envelope: ApprovalEnvelope, wait: TimeInterval) -
 private func writeDecision(_ response: ApprovalResponseEnvelope, raw: [String: Any]) {
     let providerDecision: [String: Any]
     let toolName = raw["tool_name"] as? String
+    if forCodex {
+        // Codex rejects updatedInput and interrupt (they fail closed), so only the behavior goes back.
+        switch response.decision {
+        case .allowOnce: providerDecision = ["behavior": "allow"]
+        case .deny: providerDecision = ["behavior": "deny", "message": "Denied in Attending."]
+        case .askInProvider: return
+        }
+        let output: [String: Any] = ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": providerDecision]]
+        guard let data = try? JSONSerialization.data(withJSONObject: output) else { return }
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+        return
+    }
     switch response.decision {
     case .allowOnce:
         var allow: [String: Any] = ["behavior": "allow"]
@@ -233,7 +250,7 @@ guard data.count <= maximumHookBytes,
 else { exit(0) }
 
 if CommandLine.arguments.contains("--statusline") { handleStatusLine(raw); exit(0) }
-recordLifecycle(raw)
+if !forCodex { recordLifecycle(raw) }
 if let wait = options.approvalWait,
    data.count <= ApprovalWire.maximumMessageBytes,
    let envelope = makeApprovalEnvelope(raw, wait: wait),

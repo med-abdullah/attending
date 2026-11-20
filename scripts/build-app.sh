@@ -22,6 +22,8 @@ cp "$bin_dir/attending-bridge" "$app/Contents/MacOS/attending-bridge.new"
 mv "$app/Contents/MacOS/attending-bridge.new" "$app/Contents/MacOS/attending-bridge"
 cp "$bin_dir/libAttendingMedia.dylib" "$app/Contents/Resources/libAttendingMedia.dylib"
 cp "$PWD/Assets/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+# Release notes, for What's New after an update.
+cp "$PWD/CHANGELOG.md" "$app/Contents/Resources/CHANGELOG.md"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,6 +40,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Attending shows your next event in the notch. Events never leave this Mac.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Attending shows your Apple Reminders in the notch and checks them off when you do. Reminders never leave this Mac.</string>
+<key>NSRemindersUsageDescription</key><string>Attending shows your Apple Reminders in the notch and checks them off when you do. Reminders never leave this Mac.</string>
 <key>NSCameraUsageDescription</key><string>Attending shows a camera mirror in the notch only while you have it open.</string>
 <key>NSLocationUsageDescription</key><string>Attending uses your approximate location for the weather and prayer times.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>Attending uses your approximate location for the weather and prayer times.</string>

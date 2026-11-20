@@ -88,10 +88,10 @@ struct PreviewView: View {
             if let alert = model.alert {
                 AlertBanner(alert: alert) { model.open(alert.target) }
             } else {
-                if model.liveActivities { ActivityList(center: model.activities, limit: 2) }
-                if model.showsMedia { MediaCompact(media: media, volume: model.volume) }
-                let sessions = Array(model.active.prefix(model.showsMedia ? 1 : 2))
-                if sessions.isEmpty && !model.showsMedia && model.glanceTiles == 0 && model.glanceReading == nil {
+                if model.showsPreviewActivities { ActivityList(center: model.activities, limit: 2) }
+                if model.showsPreviewMedia { MediaCompact(media: media, volume: model.volume) }
+                let sessions = model.previewSessions
+                if sessions.isEmpty && !model.showsPreviewMedia && model.glanceTiles == 0 && model.glanceReading == nil && !model.block.running {
                     HStack {
                         Text("All quiet").font(.system(size: 13, weight: .medium))
                         Text("· no agents running").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
@@ -102,6 +102,7 @@ struct PreviewView: View {
                     Button { model.selectedSessionID = session.id; model.open(.agents) } label: { SessionRow(session: session, compact: true) }.buttonStyle(.plain)
                 }
                 if timer.isActive { TimerStrip(timer: timer) }
+                if model.block.running { BlockStrip(block: model.block) }
                 if model.previewGlance {
                     GlanceView(model: model, calendar: model.calendar, sheets: model.sheets, anki: model.anki, usage: model.usage)
                 }
@@ -178,7 +179,7 @@ struct GlanceView: View {
         VStack(spacing: 6) {
             if model.glanceTiles > 0 {
                 HStack(spacing: 6) {
-                    if model.calendarEnabled, let event = calendar.next { eventTile(event) }
+                    if !model.examWeek, model.calendarEnabled, let event = calendar.next { eventTile(event) }
                     if let (tracker, summary) = sheets.primaryTracker {
                         let goal = sheets.goal(for: tracker, summary)
                         // No exam date in the sheet: just the tracker's name.
@@ -196,7 +197,7 @@ struct GlanceView: View {
                         GlanceTile(symbol: "rectangle.stack.fill", label: "Anki", value: "\(stats.dueReviews + stats.learning)", detail: stats.reviewedToday > 0 ? "\(stats.reviewedToday) done" : "due",
                                    tint: stats.dueReviews + stats.learning == 0 ? Theme.done : Theme.working, help: "Open Anki to review") { anki.openAnki() }
                     }
-                    if let five = usage.fiveHour {
+                    if !model.examWeek, let five = usage.fiveHour {
                         GlanceTile(symbol: "sparkle", label: "Claude 5h", value: "\(Int(five.used.rounded()))%", detail: five.resetsAt.map { $0.formatted(date: .omitted, time: .shortened) },
                                    tint: five.used < 70 ? Theme.done : five.used < 90 ? Theme.attention : Theme.failed, progress: five.used / 100,
                                    help: five.resetsAt.map { "Resets at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Claude usage") { model.open(.home) }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0
+
+- **Question blocks:** set a block (40 questions in 60 minutes to start) and the notch keeps your pace: "Q18 of 40 · 1 ahead", green, amber or red. It follows UWorld, AMBOSS and similar pages by reading the question number (with Accessibility allowed); otherwise ⌃⌘→ and ⌃⌘← or the hover buttons move between questions. When it ends, log what you missed and add the questions to your bank in one step.
+- **Weak spots:** tap the subjects you missed after a block (or any time). The Study tab shows your three weakest this week, and **Quiz me** asks Gemini (or your default AI) for board-style questions on them.
+- **Lecture day:** the Today card lists today's classes (checked off as each ends) and then tomorrow's, with pre-reads found in the event notes and the next chapter in your tracker. At 8 PM the notch sums up tomorrow: "Tomorrow: 3 classes, 2 pre-reads". Pick the calendar that holds your classes in Settings › Study.
+- **Exam week can turn itself on** (optional, in Settings › Boards) in the last 7 days before an exam on your tracker or Boards card, and off after it. The closed notch shows the countdown, the hover preview shows just the exam, Anki and today's goal, and alerts that can wait (agents finishing, updates, usage) hold off. Turn it off and it stays off for that exam.
+- **Codex approvals in the notch:** Settings › Agents › Codex approvals › Connect adds Attending as Codex's permission hook. Codex asks you to trust it once; then Allow or Deny from the notch, or let Codex ask as usual.
+- **What's new after each update:** the first launch after an update shows this version's highlights. Reopen it from Settings › Updates or the menu bar menu.
+- **Setup guides:** step-by-step instructions for the reading tracker, Canvas, calendars, Apple Reminders, Anki, question blocks, prayer times, and Claude Code and Codex, in each section of Settings and together under Settings › Setup guides.
+- **Fix:** the island no longer opens over Mission Control or gets stuck after it, and closes reliably whenever the pointer leaves it.
+- **Shia prayer times:** Shia Ithna-Ashari (Jafari, Leva Institute, Qum) and Tehran methods. Maghrib comes after the redness (4° below the horizon), Dhuhr and Asr stay due until sunset and Maghrib and Isha until Islamic midnight, with sunset and midnight on the Salah card and "ending soon" alerts timed to them. Checked against Aladhan.
+- **Canvas:** connect with a personal access token for announcements from your current courses (a drop-down when a new one is posted), assignments and quizzes due in the next two weeks, and your Canvas calendar, added to Calendars automatically. On Home and in Study.
+- **Apple Reminders:** what's due today and overdue, plus what's coming up, on Home. Click to check one off; type to add one for today. Turn on in Settings › Reminders.
+- **Fewer download and export dings:** render caches, optimized media, proxies and saves under 20 seconds no longer alert; a render that pauses isn't called finished until it's quiet for 20 seconds, and never dings twice; files that finish together share one alert; there's no sound while a video editor is in front, and alerts held while the island was hidden show without a sound. Settings › Live activities has separate switches for download alerts, export alerts and their sound.
+- **Quieter for new users:** Screen Time and the distraction guard now start off. The setup window has a switch for each (and a Connect button for Codex). Anyone who already had them keeps them.
+
 ## 1.1.1
 
 - **Drag the island anywhere:** press and drag it; when you let go it glides to the nearest spot (under the notch, top left, top right or bottom center). Thanks to a commenter for the idea.
